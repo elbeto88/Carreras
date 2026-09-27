@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+@layer base {
+  html, body {
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-user-select: none;
+    font-family: 'Outfit', sans-serif;
+    overflow: hidden;
+    height: 100%;
+    width: 100%;
+    background-color: #020617;
+  }
+}
+
+.font-racing {
+  font-family: 'Chakra Petch', sans-serif;
+}
+
+/* Touch controls custom classes */
+.touch-btn {
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
