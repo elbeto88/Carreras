@@ -1,0 +1,6 @@
+{
+  "name": "Carreras 3D Oval",
+  "description": "Videojuego 3D de carreras de autos en pistas ovaladas para móviles. Salta rampas, dispara a tus rivales y completa 4 vueltas para ganar.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
