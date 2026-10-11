@@ -14,6 +14,18 @@ const PORT = Number(process.env.PORT) || 3000;
 const app = express();
 app.use(express.json());
 
+// Enable CORS for API routes from any frontend domain (like vercel.app)
+app.use((_req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (_req.method === 'OPTIONS') {
+    res.sendStatus(200);
+    return;
+  }
+  next();
+});
+
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
