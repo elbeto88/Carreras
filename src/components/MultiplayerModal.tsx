@@ -1,7 +1,28 @@
 import React, { useState, useEffect } from 'react';
-import { multiplayerService } from '../services/multiplayerSocket';
+import {
+  multiplayerService,
+  SocketStatus,
+  isHostedOnVercelOrStatic,
+  getEffectiveWsUrl,
+} from '../services/multiplayerSocket';
 import { GAME_LEVELS } from '../game/trackGenerator';
-import { Users, PlusCircle, LogIn, RefreshCw, X, Trophy, Check, Sparkles } from 'lucide-react';
+import {
+  Users,
+  PlusCircle,
+  LogIn,
+  RefreshCw,
+  X,
+  Trophy,
+  Check,
+  Sparkles,
+  Server,
+  AlertTriangle,
+  Bot,
+  ExternalLink,
+  Wifi,
+  WifiOff,
+  Copy,
+} from 'lucide-react';
 
 interface MultiplayerModalProps {
   isOpen: boolean;
@@ -31,7 +52,7 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
   playerColor,
   onUpdatePlayerColor,
 }) => {
-  const [activeTab, setActiveTab] = useState<'browse' | 'create' | 'join'>('browse');
+  const [activeTab, setActiveTab] = useState<'browse' | 'create' | 'join' | 'server'>('browse');
   const [rooms, setRooms] = useState<any[]>([]);
   const [roomCodeInput, setRoomCodeInput] = useState('');
   const [newRoomName, setNewRoomName] = useState('');
@@ -40,11 +61,34 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Server state & testing
+  const [socketStatus, setSocketStatus] = useState<SocketStatus>(multiplayerService.getStatus());
+  const [customServerInput, setCustomServerInput] = useState('');
+  const [isTestingServer, setIsTestingServer] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; latencyMs?: number; error?: string } | null>(null);
+  const [copiedScript, setCopiedScript] = useState(false);
+
+  const isVercel = isHostedOnVercelOrStatic();
+
   useEffect(() => {
     if (!isOpen) return;
 
-    // Request room list
-    multiplayerService.getRooms();
+    setSocketStatus(multiplayerService.getStatus());
+    const saved = localStorage.getItem('carreras_custom_ws_url') || '';
+    setCustomServerInput(saved);
+
+    // Request room list if connected
+    if (multiplayerService.getStatus() === 'connected') {
+      multiplayerService.getRooms();
+    }
+
+    const unsubStatus = multiplayerService.on('status_change', (status: SocketStatus) => {
+      setSocketStatus(status);
+      if (status === 'connected') {
+        multiplayerService.getRooms();
+        setErrorMsg(null);
+      }
+    });
 
     const unsubRooms = multiplayerService.on('rooms_list', (roomList) => {
       setRooms(roomList);
@@ -57,6 +101,7 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
     });
 
     return () => {
+      unsubStatus();
       unsubRooms();
       unsubError();
     };
@@ -67,6 +112,11 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
   const handleRefreshRooms = () => {
     setIsLoading(true);
     setErrorMsg(null);
+    if (socketStatus !== 'connected') {
+      multiplayerService.connect();
+      setTimeout(() => setIsLoading(false), 2000);
+      return;
+    }
     multiplayerService.getRooms();
   };
 
@@ -76,10 +126,33 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
       setErrorMsg('Ingresa tu nombre de piloto');
       return;
     }
+
+    if (socketStatus !== 'connected') {
+      setErrorMsg(
+        '⚠️ No hay conexión con el servidor WebSocket. En Vercel necesitas conectar un backend Node.js (ej: Render/Railway) o probar la Sala Simulada con Bots.'
+      );
+      return;
+    }
+
     setErrorMsg(null);
     setIsLoading(true);
 
     multiplayerService.createRoom({
+      roomName: newRoomName.trim() || `Pista de ${playerName}`,
+      playerName: playerName.trim(),
+      carColor: playerColor,
+      levelId: selectedLevelId,
+      maxPlayers,
+    });
+  };
+
+  const handleCreateSimulatedRoom = () => {
+    if (!playerName.trim()) {
+      setErrorMsg('Ingresa tu nombre de piloto');
+      return;
+    }
+    setErrorMsg(null);
+    multiplayerService.createSimulatedRoom({
       roomName: newRoomName.trim() || `Pista de ${playerName}`,
       playerName: playerName.trim(),
       carColor: playerColor,
@@ -99,6 +172,12 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
       setErrorMsg('Ingresa tu nombre de piloto');
       return;
     }
+
+    if (socketStatus !== 'connected') {
+      setErrorMsg('⚠️ No hay conexión con el servidor WebSocket.');
+      return;
+    }
+
     setErrorMsg(null);
     setIsLoading(true);
 
@@ -114,6 +193,12 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
       setErrorMsg('Ingresa tu nombre de piloto');
       return;
     }
+
+    if (socketStatus !== 'connected') {
+      setErrorMsg('⚠️ Sin conexión al servidor.');
+      return;
+    }
+
     setErrorMsg(null);
     setIsLoading(true);
 
@@ -124,21 +209,70 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
     });
   };
 
+  const handleTestCustomServer = async () => {
+    const target = customServerInput.trim() || multiplayerService.getActiveUrl();
+    setIsTestingServer(true);
+    setTestResult(null);
+    const result = await multiplayerService.testConnection(target);
+    setIsTestingServer(false);
+    setTestResult(result);
+  };
+
+  const handleSaveCustomServer = () => {
+    multiplayerService.setCustomServerUrl(customServerInput.trim() || null);
+    setTestResult(null);
+  };
+
+  const handleResetDefaultServer = () => {
+    setCustomServerInput('');
+    multiplayerService.setCustomServerUrl(null);
+    setTestResult(null);
+  };
+
+  const activeWsInfo = getEffectiveWsUrl();
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/85 backdrop-blur-md font-racing">
       <div className="relative w-full max-w-xl max-h-[92vh] flex flex-col bg-slate-900 border border-cyan-500/40 rounded-2xl shadow-2xl shadow-cyan-950/50 overflow-hidden text-white">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3.5 bg-gradient-to-r from-slate-900 via-cyan-950/50 to-slate-900 border-b border-slate-800">
+        <div className="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-slate-900 via-cyan-950/50 to-slate-900 border-b border-slate-800">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-cyan-500/20 text-cyan-400 border border-cyan-500/40">
               <Users className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-lg font-black tracking-wide text-cyan-300">
-                MULTIJUGADOR ONLINE
-              </h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-black tracking-wide text-cyan-300">
+                  MULTIJUGADOR ONLINE
+                </h2>
+                {/* Connection Status Pill */}
+                <span
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-sans font-bold border ${
+                    socketStatus === 'connected'
+                      ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/50'
+                      : socketStatus === 'connecting'
+                      ? 'bg-amber-950/80 text-amber-300 border-amber-500/50'
+                      : 'bg-red-950/80 text-red-300 border-red-500/50'
+                  }`}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      socketStatus === 'connected'
+                        ? 'bg-emerald-400 animate-pulse'
+                        : socketStatus === 'connecting'
+                        ? 'bg-amber-400 animate-ping'
+                        : 'bg-red-400'
+                    }`}
+                  />
+                  {socketStatus === 'connected'
+                    ? 'Conectado'
+                    : socketStatus === 'connecting'
+                    ? 'Conectando...'
+                    : 'Desconectado'}
+                </span>
+              </div>
               <p className="text-[11px] text-slate-400 font-sans">
-                Compite en tiempo real contra amigos y pilotos de todo el mundo
+                Carreras en tiempo real en pistas ovaladas de 4 vueltas
               </p>
             </div>
           </div>
@@ -150,8 +284,48 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
           </button>
         </div>
 
+        {/* Vercel / Disconnected Alert Banner */}
+        {socketStatus !== 'connected' && (
+          <div className="px-4 py-2.5 bg-gradient-to-r from-amber-950/80 via-slate-900 to-amber-950/80 border-b border-amber-500/40 font-sans text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-amber-200">
+                  {isVercel
+                    ? 'Servidor WebSocket no disponible en Vercel (Hosting Estático)'
+                    : 'Sin conexión con el servidor WebSocket'}
+                </p>
+                <p className="text-[11px] text-slate-300">
+                  {isVercel
+                    ? 'Vercel es Serverless y no ejecuta servidores Node.js con WebSockets continuos.'
+                    : 'Verifica tu conexión a internet o la URL del backend.'}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+              <button
+                type="button"
+                onClick={handleCreateSimulatedRoom}
+                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-racing font-bold text-[10px] tracking-wider flex items-center gap-1 transition-all active:scale-95"
+                title="Crea una sala de prueba con bots IA"
+              >
+                <Bot className="w-3 h-3" />
+                <span>PROBAR CON BOTS</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('server')}
+                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/30 text-[10px] font-bold flex items-center gap-1 transition-all"
+              >
+                <Server className="w-3 h-3" />
+                <span>SOLUCIÓN</span>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Pilot Setup Bar */}
-        <div className="p-4 bg-slate-950/60 border-b border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="p-3.5 bg-slate-950/60 border-b border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1">
               Nombre de Piloto
@@ -188,10 +362,10 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-slate-800 bg-slate-900/50 px-3 pt-2 gap-2 text-xs font-bold">
+        <div className="flex border-b border-slate-800 bg-slate-900/50 px-3 pt-2 gap-1.5 text-xs font-bold overflow-x-auto">
           <button
             onClick={() => setActiveTab('browse')}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-t-lg transition-colors ${
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-t-lg transition-colors shrink-0 ${
               activeTab === 'browse'
                 ? 'bg-slate-800 text-cyan-300 border-t border-x border-cyan-500/30'
                 : 'text-slate-400 hover:text-white'
@@ -202,7 +376,7 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
           </button>
           <button
             onClick={() => setActiveTab('create')}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-t-lg transition-colors ${
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-t-lg transition-colors shrink-0 ${
               activeTab === 'create'
                 ? 'bg-slate-800 text-cyan-300 border-t border-x border-cyan-500/30'
                 : 'text-slate-400 hover:text-white'
@@ -213,7 +387,7 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
           </button>
           <button
             onClick={() => setActiveTab('join')}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-t-lg transition-colors ${
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-t-lg transition-colors shrink-0 ${
               activeTab === 'join'
                 ? 'bg-slate-800 text-cyan-300 border-t border-x border-cyan-500/30'
                 : 'text-slate-400 hover:text-white'
@@ -222,20 +396,31 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
             <LogIn className="w-3.5 h-3.5" />
             Unirse con Código
           </button>
+          <button
+            onClick={() => setActiveTab('server')}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-t-lg transition-colors shrink-0 ml-auto ${
+              activeTab === 'server'
+                ? 'bg-slate-800 text-emerald-300 border-t border-x border-emerald-500/30'
+                : 'text-slate-400 hover:text-emerald-300'
+            }`}
+          >
+            <Server className="w-3.5 h-3.5" />
+            Servidor / Vercel
+          </button>
         </div>
 
         {/* Error Alert */}
         {errorMsg && (
-          <div className="mx-4 mt-3 px-3 py-2 rounded-lg bg-red-950/80 border border-red-500/50 text-red-200 text-xs font-sans flex items-center justify-between">
+          <div className="mx-4 mt-3 px-3 py-2 rounded-lg bg-red-950/80 border border-red-500/50 text-red-200 text-xs font-sans flex items-start justify-between gap-2">
             <span>{errorMsg}</span>
-            <button onClick={() => setErrorMsg(null)} className="text-red-400 hover:text-white">
+            <button onClick={() => setErrorMsg(null)} className="text-red-400 hover:text-white shrink-0">
               ✕
             </button>
           </div>
         )}
 
         {/* Tab Content */}
-        <div className="flex-1 p-4 overflow-y-auto">
+        <div className="flex-1 p-4 overflow-y-auto custom-scrollbar">
           {/* TAB 1: BROWSE ROOMS */}
           {activeTab === 'browse' && (
             <div className="space-y-3">
@@ -254,16 +439,26 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
               </div>
 
               {rooms.length === 0 ? (
-                <div className="py-12 flex flex-col items-center justify-center text-center text-slate-400">
+                <div className="py-10 flex flex-col items-center justify-center text-center text-slate-400">
                   <Trophy className="w-12 h-12 text-slate-600 mb-2 stroke-[1.5]" />
                   <p className="text-sm font-bold text-slate-300">No hay salas abiertas en este momento</p>
                   <p className="text-xs text-slate-500 font-sans mt-1">¡Crea tu propia sala e invita a tus amigos!</p>
-                  <button
-                    onClick={() => setActiveTab('create')}
-                    className="mt-4 px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs tracking-wider shadow-lg shadow-cyan-900/40 active:scale-95 transition-all"
-                  >
-                    CREAR SALA AHORA
-                  </button>
+
+                  <div className="mt-4 flex flex-wrap gap-2 justify-center">
+                    <button
+                      onClick={() => setActiveTab('create')}
+                      className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs tracking-wider shadow-lg shadow-cyan-900/40 active:scale-95 transition-all"
+                    >
+                      CREAR SALA
+                    </button>
+                    <button
+                      onClick={handleCreateSimulatedRoom}
+                      className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/40 font-bold text-xs tracking-wider flex items-center gap-1.5 transition-all active:scale-95"
+                    >
+                      <Bot className="w-3.5 h-3.5" />
+                      PROBAR SALA CON BOTS
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -298,22 +493,22 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
                         </div>
 
                         <div className="mt-3 flex items-center justify-between pt-2 border-t border-slate-700/60">
-                          <span className="text-xs font-bold text-slate-300">
-                            🏎️ {r.playerCount} / {r.maxPlayers}
+                          <span className="text-[11px] text-slate-300 font-sans">
+                            {r.playerCount} / {r.maxPlayers} Pilotos
                           </span>
 
                           <button
                             onClick={() => handleQuickJoinRoom(r.id)}
                             disabled={isFull || isRacing}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                              isRacing
-                                ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
-                                : isFull
-                                ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
-                                : 'bg-cyan-600 hover:bg-cyan-500 text-white shadow active:scale-95'
+                            className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                              isFull
+                                ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                                : isRacing
+                                ? 'bg-amber-950 text-amber-400 border border-amber-700 cursor-not-allowed'
+                                : 'bg-cyan-600 hover:bg-cyan-500 text-white active:scale-95'
                             }`}
                           >
-                            {isRacing ? 'En Carrera' : isFull ? 'Completa' : 'UNIRSE'}
+                            {isFull ? 'Llena' : isRacing ? 'En Carrera' : 'Unirse'}
                           </button>
                         </div>
                       </div>
@@ -391,14 +586,26 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
                 </div>
               </div>
 
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 font-black text-sm tracking-wider shadow-lg shadow-cyan-950/60 active:scale-98 transition-all flex items-center justify-center gap-2"
-              >
-                <Sparkles className="w-4 h-4 text-cyan-200" />
-                CREAR SALA Y ABRIR LOBBY
-              </button>
+              <div className="space-y-2 pt-1">
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 font-black text-sm tracking-wider shadow-lg shadow-cyan-950/60 active:scale-98 transition-all flex items-center justify-center gap-2"
+                >
+                  <Sparkles className="w-4 h-4 text-cyan-200" />
+                  <span>CREAR SALA ONLINE</span>
+                </button>
+
+                {/* Option to create simulated bot room */}
+                <button
+                  type="button"
+                  onClick={handleCreateSimulatedRoom}
+                  className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-emerald-500/40 text-emerald-300 font-bold text-xs tracking-wider flex items-center justify-center gap-2 transition-all active:scale-98"
+                >
+                  <Bot className="w-4 h-4 text-emerald-400" />
+                  <span>PROBAR SALA CON BOTS IA (NO REQUIERE SERVIDOR)</span>
+                </button>
+              </div>
             </form>
           )}
 
@@ -430,6 +637,148 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
                 CONECTAR A LA SALA
               </button>
             </form>
+          )}
+
+          {/* TAB 4: SERVER CONFIG & VERCEL GUIDE */}
+          {activeTab === 'server' && (
+            <div className="space-y-4 font-sans text-xs">
+              {/* Status card */}
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 font-semibold uppercase text-[11px]">
+                    Estado de la Conexión WebSocket
+                  </span>
+                  <div className="flex items-center gap-1.5 font-bold">
+                    {socketStatus === 'connected' ? (
+                      <>
+                        <Wifi className="w-4 h-4 text-emerald-400" />
+                        <span className="text-emerald-400">Activo y Conectado</span>
+                      </>
+                    ) : (
+                      <>
+                        <WifiOff className="w-4 h-4 text-red-400" />
+                        <span className="text-red-400">Sin Conexión Activa</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-slate-300 font-mono bg-slate-900 p-2 rounded border border-slate-800 break-all">
+                  <span className="text-cyan-400">URL Activa:</span> {multiplayerService.getActiveUrl() || activeWsInfo.url}
+                </div>
+              </div>
+
+              {/* Custom Server Input */}
+              <div className="p-3 rounded-xl bg-slate-800/80 border border-slate-700 space-y-2.5">
+                <label className="block text-slate-300 font-bold text-xs">
+                  Conectar a Servidor WebSocket Externo
+                </label>
+                <p className="text-[11px] text-slate-400">
+                  Si tu frontend está en Vercel, ingresa aquí la URL de tu backend alojado en Render o Railway (ej: <code className="text-cyan-300">wss://mi-servidor.onrender.com/ws</code>):
+                </p>
+
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={customServerInput}
+                    onChange={(e) => setCustomServerInput(e.target.value)}
+                    placeholder="wss://tu-backend.onrender.com/ws"
+                    className="flex-1 px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 font-mono text-xs text-white focus:outline-none focus:border-cyan-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleTestCustomServer}
+                    disabled={isTestingServer}
+                    className="px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-bold transition-all active:scale-95 shrink-0"
+                  >
+                    {isTestingServer ? 'Probando...' : 'Probar'}
+                  </button>
+                </div>
+
+                {/* Test Result Message */}
+                {testResult && (
+                  <div
+                    className={`p-2 rounded-lg text-[11px] flex items-center gap-1.5 ${
+                      testResult.success
+                        ? 'bg-emerald-950/80 border border-emerald-500/40 text-emerald-300'
+                        : 'bg-red-950/80 border border-red-500/40 text-red-300'
+                    }`}
+                  >
+                    {testResult.success ? (
+                      <>
+                        <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span>¡Conexión exitosa! Latencia estimada: {testResult.latencyMs} ms</span>
+                      </>
+                    ) : (
+                      <>
+                        <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                        <span>{testResult.error || 'Error al conectar'}</span>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleSaveCustomServer}
+                    className="flex-1 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-racing font-bold text-xs tracking-wider transition-all"
+                  >
+                    GUARDAR Y CONECTAR
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResetDefaultServer}
+                    className="px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-semibold transition-all"
+                  >
+                    Restablecer
+                  </button>
+                </div>
+              </div>
+
+              {/* Why Vercel fails & 2-Minute Solution */}
+              <div className="p-3.5 rounded-xl bg-slate-950/80 border border-cyan-500/30 space-y-2.5">
+                <div className="flex items-center gap-2 text-cyan-300 font-racing font-bold text-xs tracking-wider">
+                  <Sparkles className="w-4 h-4 text-cyan-400" />
+                  <span>¿POR QUÉ VERCEL NO GENERA LA SALA Y CÓMO SOLUCIONARLO?</span>
+                </div>
+
+                <div className="text-[11px] text-slate-300 space-y-2 leading-relaxed">
+                  <p>
+                    <strong className="text-white">Causa:</strong> Vercel es una plataforma <em>Serverless / Estática</em>. Al desplegar en Vercel, solo se compila la parte visual de React en la carpeta <code className="text-cyan-300">dist/</code>. Vercel <strong>NO ejecuta</strong> servidores persistentes de Node.js con conexiones WebSockets continuas (<code className="text-cyan-300">server.ts</code>). Por eso, al intentar crear o buscar salas, no encuentra el servidor.
+                  </p>
+
+                  <p>
+                    <strong className="text-white">Solución rápida (100% Gratuita en 2 minutos):</strong>
+                  </p>
+
+                  <ol className="list-decimal list-inside space-y-1.5 pl-1 text-slate-300">
+                    <li>
+                      Entra a <strong className="text-cyan-300">Render.com</strong> o <strong className="text-cyan-300">Railway.app</strong> y crea una cuenta gratuita.
+                    </li>
+                    <li>
+                      Haz clic en <strong>New &gt; Web Service</strong> y selecciona tu repositorio de GitHub del juego.
+                    </li>
+                    <li>
+                      Configura estos 2 comandos sencillos:
+                      <div className="bg-slate-900 p-2 rounded mt-1 font-mono text-[10px] space-y-0.5 border border-slate-800">
+                        <div><span className="text-slate-400">Build Command:</span> <code className="text-emerald-400">npm install && npm run build</code></div>
+                        <div><span className="text-slate-400">Start Command:</span> <code className="text-emerald-400">npm start</code></div>
+                      </div>
+                    </li>
+                    <li>
+                      Copia la URL pública que te dé Render (ejemplo: <code className="text-cyan-300">https://carreras-backend.onrender.com</code>).
+                    </li>
+                    <li>
+                      Pega esa URL aquí arriba en <em>"Conectar a Servidor WebSocket Externo"</em> o en tu proyecto de Vercel agrega la variable:
+                      <div className="bg-slate-900 p-1.5 rounded mt-1 font-mono text-[10px] text-emerald-400 border border-slate-800">
+                        VITE_WS_URL = wss://tu-servicio.onrender.com/ws
+                      </div>
+                    </li>
+                  </ol>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       </div>

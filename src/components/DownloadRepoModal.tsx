@@ -157,6 +157,16 @@ export function DownloadRepoModal({ isOpen, onClose }: DownloadRepoModalProps) {
                   </div>
                 </div>
               </div>
+
+              <div className="flex items-start gap-2 bg-emerald-950/30 p-2.5 rounded-lg border border-emerald-500/30">
+                <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-300 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">4</span>
+                <div>
+                  <p className="font-semibold text-emerald-300">Si publicas en Vercel (Multijugador Online)</p>
+                  <p className="text-[11px] text-slate-300">
+                    Vercel solo aloja el HTML/JS estático. Para que las salas funcionen en internet, conecta tu repositorio gratis en <strong className="text-white">Render.com</strong> (usando el archivo <code className="text-emerald-300">render.yaml</code> incluido) y pon en Vercel la variable <code className="text-cyan-300">VITE_WS_URL=wss://tu-render.onrender.com/ws</code>.
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
 
